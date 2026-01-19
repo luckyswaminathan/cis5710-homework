@@ -14,8 +14,24 @@ _start:
         # Load the address of the input string into a0
         la a0, input_string
 
-        # Your code here!
+loop:
+        lb a1, 0(a0)
+        beqz a1, end_program
         
+        addi a2, a1, -'a'
+        li a3, 26
+        bge a2, a3, next_char
+        blt a2, zero, next_char
+        
+        addi a1, a1, -32
+        sb a1, 0(a0)
+
+next_char:
+        addi a0, a0, 1
+        j loop
+
+
+
 end_program:
         # jump here when you're done
         j end_program
