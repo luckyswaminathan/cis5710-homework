@@ -26,7 +26,7 @@ async def test_zeroes(dut):
 @cocotb.test()
 async def test_msb_generate(dut):
     await Timer(1, "ns")
-    dut.gin.value = 0x8
+    dut.gin.value = 0x8 ## 1000
     dut.pin.value = 0x0
     dut.cin.value = 0x0
     await Timer(1, "ns")
@@ -39,7 +39,7 @@ async def test_msb_generate(dut):
 async def test_propagate_full(dut):
     await Timer(1, "ns")
     dut.gin.value = 0x0
-    dut.pin.value = 0xF
+    dut.pin.value = 0xF #1111
     dut.cin.value = 1
     await Timer(1, "ns")
     assertEquals(0, dut.gout.value)
@@ -49,8 +49,8 @@ async def test_propagate_full(dut):
 
 @cocotb.test()
 async def test_propagate_partway(dut):
-    await Timer(1, "ns")
-    dut.gin.value = 0x0
+    await Timer(1, "ns") 
+    dut.gin.value = 0x0 # -> 1000
     dut.pin.value = 0x7
     dut.cin.value = 1
     await Timer(1, "ns")
