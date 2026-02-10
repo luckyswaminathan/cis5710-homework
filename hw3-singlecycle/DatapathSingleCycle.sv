@@ -28,7 +28,22 @@ module RegFile (
   localparam int NumRegs = 32;
   logic [`REG_SIZE] regs[NumRegs];
 
-  // TODO: your code here
+  always_ff @(posedge clk) begin
+    integer i;
+    if (rst) begin
+      for (i = 0; i < NumRegs; i = i + 1)
+        regs[i] <= 32'b0;
+    end else begin
+      if (we && (rd != 5'd0)) begin
+        regs[rd] <= rd_data;
+      end
+    end
+  end
+
+  assign rs1_data = (rs1 == 5'd0) ? 32'b0 : regs[rs1];
+  assign rs2_data = (rs2 == 5'd0) ? 32'b0 : regs[rs2];
+
+
 
 endmodule
 
