@@ -248,7 +248,13 @@ module DatapathSingleCycle (
             rd_data = rs1_data + imm_i_sext;
             we = 1'b1;
           end
-          3'b001: begin
+          3'b010: begin
+            rd_data = ($signed(rs1_data) < $signed(imm_i_sext)) ? 32'b1 : 32'b0;
+            we = 1'b1;
+          end
+          3'b011: begin
+            rd_data = (rs1_data < imm_i_sext) ? 32'b1 : 32'b0;
+            we = 1'b1;
           end
         
           default: begin

@@ -166,6 +166,22 @@ async def testAddi(dut):
     assertEquals(9, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer} with {dut.datapath.rf.regs[1].value}')
 
 @cocotb.test()
+async def testSlti(dut):
+    "Run one slti insn"
+    await preTestSetup(dut, 'slti x1,x0,9')
+
+    await ClockCycles(dut.clock_proc, 2)
+    assertEquals(1, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer}')
+
+@cocotb.test()
+async def testSltiu(dut):
+    "Run one sltiu insn"
+    await preTestSetup(dut, 'sltiu x1,x0,9')
+
+    await ClockCycles(dut.clock_proc, 2)
+    assertEquals(1, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer}')
+
+@cocotb.test()
 async def testLuiAddi(dut):
     "Run two insns to check PC incrementing"
     await preTestSetup(dut, '''
