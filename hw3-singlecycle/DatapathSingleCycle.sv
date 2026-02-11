@@ -197,6 +197,7 @@ module DatapathSingleCycle (
     end
   end
   assign pc_to_imem = pcCurrent;
+  assign pcNext = pcCurrent + 32'd4;
 
   // cycle/insn_from_imem counters
   logic [`REG_SIZE] cycles_current, num_insns_current;
@@ -256,6 +257,26 @@ module DatapathSingleCycle (
             rd_data = (rs1_data < imm_i_sext) ? 32'b1 : 32'b0;
             we = 1'b1;
           end
+          3'b100: begin
+            rd_data = rs1_data ^ imm_i_sext;
+            we = 1'b1;
+          end
+          3'b110: begin 
+            rd_data = rs1_data | imm_i_sext;
+            we = 1'b1;
+          end
+          3'b111: begin 
+            rd_data = rs1_data & imm_i_sext;
+            we = 1'b1;
+          end
+          3'b001: begin 
+            rd_data = rs1_data << imm_i[4:0];
+            we = 1'b1;
+          end
+          3'b101: begin 
+            rd_data = rs1_data >> imm_i[4:0];
+            we = 1'b1;
+          end
         
           default: begin
             illegal_insn = 1'b1;
@@ -265,6 +286,17 @@ module DatapathSingleCycle (
 
         
         
+      end
+
+      OpRegReg: begin
+        case (insn_from_imem[14]:12)
+
+
+          default: begin 
+            illegal_insn = 1'b1;
+          end
+
+        endcase
       end
 
 
