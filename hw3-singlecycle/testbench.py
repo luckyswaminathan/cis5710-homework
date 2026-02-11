@@ -163,7 +163,7 @@ async def testAddi(dut):
     await preTestSetup(dut, 'addi x1,x0,9')
 
     await ClockCycles(dut.clock_proc, 2)
-    assertEquals(9, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer}')
+    assertEquals(9, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer} with {dut.datapath.rf.regs[1].value}')
 
 @cocotb.test()
 async def testLuiAddi(dut):
