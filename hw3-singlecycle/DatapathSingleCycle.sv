@@ -248,6 +248,23 @@ module DatapathSingleCycle (
         we = 1'b1;
       end
 
+      OpAuipc: begin
+        rd_data = pcCurrent + {insn_from_imem[31:12], 12'b0};
+        we = 1'b1;
+      end
+
+      OpJal: begin
+        rd_data = pcCurrent + 32'd4;
+        we = 1'b1;
+        pcNext = pcCurrent + imm_j_sext;
+      end
+
+      OpJalr: begin
+        rd_data = pcCurrent + 32'd4;
+        we = 1'b1;
+        pcNext = (rs1_data + imm_i_sext) & ~32'd1;
+      end
+
       OpEnviron: begin
         if (insn_ecall)
           halt = 1'b1;
@@ -283,8 +300,11 @@ module DatapathSingleCycle (
             rd_data = rs1_data << imm_i[4:0];
             we = 1'b1;
           end
-          3'b101: begin 
-            rd_data = rs1_data >> imm_i[4:0];
+          3'b101: begin
+            if (insn_from_imem[30])
+              rd_data = $signed(rs1_data) >>> imm_i[4:0]; // SRAI
+            else
+              rd_data = rs1_data >> imm_i[4:0]; // SRLI
             we = 1'b1;
           end
         
@@ -334,6 +354,13 @@ module DatapathSingleCycle (
           end
           3'b110: begin 
             rd_data = rs1_data | rs2_data;
+            we = 1'b1;
+          end
+          3'b101: begin
+            if (insn_from_imem[30])
+              rd_data = $signed(rs1_data) >>> rs2_data[4:0]; // SRA
+            else
+              rd_data = rs1_data >> rs2_data[4:0]; // SRL
             we = 1'b1;
           end
           3'b111: begin 
