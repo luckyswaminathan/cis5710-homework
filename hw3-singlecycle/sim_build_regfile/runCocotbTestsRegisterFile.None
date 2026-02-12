@@ -1,0 +1,10 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="12345" />
+    <testcase name="readx0" classname="testbench_regfile" file="/workspaces/cis5710-homework/hw3-singlecycle/testbench_regfile.py" lineno="33" time="0.026861190795898438" sim_time_ns="6.001" ratio_time="223.40781708442805" />
+    <testcase name="writeReadx0" classname="testbench_regfile" file="/workspaces/cis5710-homework/hw3-singlecycle/testbench_regfile.py" lineno="43" time="0.008331298828125" sim_time_ns="8.001000000000001" ratio_time="960.3544615384617" />
+    <testcase name="writeReadx1" classname="testbench_regfile" file="/workspaces/cis5710-homework/hw3-singlecycle/testbench_regfile.py" lineno="58" time="0.005906343460083008" sim_time_ns="8.001" ratio_time="1354.645230856174" />
+    <testcase name="checkIndividual" classname="testbench_regfile" file="/workspaces/cis5710-homework/hw3-singlecycle/testbench_regfile.py" lineno="73" time="0.0872807502746582" sim_time_ns="128.00099999999998" ratio_time="1466.5433053359627" />
+    <testcase name="checkBatch" classname="testbench_regfile" file="/workspaces/cis5710-homework/hw3-singlecycle/testbench_regfile.py" lineno="100" time="0.911506175994873" sim_time_ns="2114.001" ratio_time="2319.2393597252935" />
+  </testsuite>
+</testsuites>

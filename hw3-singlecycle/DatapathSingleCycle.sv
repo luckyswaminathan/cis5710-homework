@@ -197,7 +197,10 @@ module DatapathSingleCycle (
     end
   end
   assign pc_to_imem = pcCurrent;
-  assign pcNext = pcCurrent + 32'd4;
+
+  assign trace_completed_pc = pcCurrent;
+  assign trace_completed_insn = insn_from_imem;
+  assign trace_completed_cycle_status = CYCLE_NO_STALL;
 
   // cycle/insn_from_imem counters
   logic [`REG_SIZE] cycles_current, num_insns_current;
@@ -236,11 +239,18 @@ module DatapathSingleCycle (
     illegal_insn = 1'b0;
     rd_data = 32'b0;
     we = 1'b0;
+    pcNext = pcCurrent + 32'd4;
+    halt = 1'b0;
 
     case (insn_opcode)
       OpLui: begin
         rd_data = {insn_from_imem[31:12], 12'b0};
         we = 1'b1;
+      end
+
+      OpEnviron: begin
+        if (insn_ecall)
+          halt = 1'b1;
       end
 
       OpRegImm: begin 
@@ -289,8 +299,47 @@ module DatapathSingleCycle (
       end
 
       OpRegReg: begin
-        case (insn_from_imem[14]:12)
+        case (insn_from_imem[14:12])
+          3'b000: begin
 
+            case (insn_from_imem[31:25])
+              7'd0: begin
+                rd_data = rs1_data + rs2_data;
+                we = 1'b1;
+              end
+              7'b0100000: begin
+                rd_data = rs1_data + ((~rs2_data) + 32'd1);
+                we = 1'b1;
+              end
+              default: begin
+                illegal_insn = 1'b1;
+              end
+            endcase
+          end
+          3'b001: begin 
+            rd_data = rs1_data << rs2_data[4:0];
+            we = 1'b1;
+          end
+          3'b010: begin 
+            rd_data = ($signed(rs1_data) < $signed(rs2_data)) ? 32'b1 : 32'b0;
+            we = 1'b1;
+          end
+          3'b011: begin 
+            rd_data = (rs1_data < rs2_data) ? 32'b1 : 32'b0;
+            we = 1'b1;
+          end
+          3'b100: begin 
+            rd_data = rs1_data ^ rs2_data;
+            we = 1'b1;
+          end
+          3'b110: begin 
+            rd_data = rs1_data | rs2_data;
+            we = 1'b1;
+          end
+          3'b111: begin 
+            rd_data = rs1_data & rs2_data;
+            we = 1'b1;
+          end
 
           default: begin 
             illegal_insn = 1'b1;
@@ -299,6 +348,38 @@ module DatapathSingleCycle (
         endcase
       end
 
+
+      OpBranch: begin
+        case (insn_from_imem[14:12])
+          3'b000: begin
+            if (rs1_data == rs2_data)
+              pcNext = pcCurrent + imm_b_sext;
+          end
+          3'b001: begin
+            if (rs1_data != rs2_data)
+              pcNext = pcCurrent + imm_b_sext;
+          end
+          3'b100: begin
+            if ($signed(rs1_data) < $signed(rs2_data))
+              pcNext = pcCurrent + imm_b_sext;
+          end
+          3'b101: begin
+            if ($signed(rs1_data) >= $signed(rs2_data))
+              pcNext = pcCurrent + imm_b_sext;
+          end
+          3'b110: begin
+            if (rs1_data < rs2_data)
+              pcNext = pcCurrent + imm_b_sext;
+          end
+          3'b111: begin
+            if (rs1_data >= rs2_data)
+              pcNext = pcCurrent + imm_b_sext;
+          end
+          default: begin
+            illegal_insn = 1'b1;
+          end
+        endcase
+      end
 
       default: begin
         illegal_insn = 1'b1;

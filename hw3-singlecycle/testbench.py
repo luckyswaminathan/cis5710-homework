@@ -239,6 +239,30 @@ async def testOriSext(dut):
     assertEquals(0xFFFF_FFFF, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer}')
 
 @cocotb.test()
+async def testAdd(dut):
+    "Run add"
+    await preTestSetup(dut, '''
+    addi x1,x0,8
+    addi x2,x0,7
+    add x1,x1,x2''')
+
+    await ClockCycles(dut.clock_proc, 4)
+    assertEquals(15, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer}')
+    pass
+
+@cocotb.test()
+async def testSub(dut):
+    "Run sub"
+    await preTestSetup(dut, '''
+    addi x1,x0,15
+    addi x2,x0,7
+    sub x1,x1,x2''')
+
+    await ClockCycles(dut.clock_proc, 4)
+    assertEquals(8, dut.datapath.rf.regs[1].value, f'failed at cycle {dut.datapath.cycles_current.value.integer}')
+    pass
+
+@cocotb.test()
 async def testBneNotTaken(dut):
     "bne which is not taken"
     await preTestSetup(dut, '''
