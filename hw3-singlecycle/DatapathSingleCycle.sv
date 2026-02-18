@@ -232,6 +232,7 @@ module DatapathSingleCycle (
     .rs1_data(rs1_data),
     .rs2_data(rs2_data));
 
+  wire [`REG_SIZE] load_addr = rs1_data + imm_i_sext;
   logic illegal_insn;
 
 
@@ -407,6 +408,52 @@ module DatapathSingleCycle (
           end
         endcase
       end
+
+      OpLoad: begin
+        we = 1'b1;
+        addr_to_dmem = load_addr & ~32'h3;
+        case (insn_from_imem[14:12])
+          3'b000: begin 
+            case (load_addr[1:0])
+              2'b00: rd_data = {{24{load_data_from_dmem[7]}}, load_data_from_dmem[7:0]};
+              2'b01: rd_data = {{24{load_data_from_dmem[15]}}, load_data_from_dmem[15:8]};
+              2'b10: rd_data = {{24{load_data_from_dmem[23]}}, load_data_from_dmem[23:16]};
+              2'b11: rd_data = {{24{load_data_from_dmem[31]}}, load_data_from_dmem[31:24]};
+            endcase
+          end
+          3'b001: begin
+            case (load_addr[1])
+              1'b0: rd_data = {{16{load_data_from_dmem[15]}}, load_data_from_dmem[15:0]};
+              1'b1: rd_data = {{16{load_data_from_dmem[31]}}, load_data_from_dmem[31:16]};
+            endcase
+          end
+          3'b010: begin  
+            rd_data = load_data_from_dmem[31:0];
+          end
+          3'b100: begin  
+            case (load_addr[1:0])
+              2'b00: rd_data = {24'b0, load_data_from_dmem[7:0]};
+              2'b01: rd_data = {24'b0, load_data_from_dmem[15:8]};
+              2'b10: rd_data = {24'b0, load_data_from_dmem[23:16]};
+              2'b11: rd_data = {24'b0, load_data_from_dmem[31:24]};
+            endcase
+          end
+          3'b101: begin
+            case (load_addr[1])
+              1'b0: rd_data = {16'b0, load_data_from_dmem[15:0]};
+              1'b1: rd_data = {16'b0, load_data_from_dmem[31:16]};
+            endcase
+          end
+
+          default: begin
+            illegal_insn = 1'b1;
+          end
+        endcase
+      end
+      // OpStore: begin
+      //   case (insn_from_imem[14:12])
+      //   endcase
+      // end
 
       default: begin
         illegal_insn = 1'b1;
