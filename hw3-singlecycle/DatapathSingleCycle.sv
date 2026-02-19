@@ -233,6 +233,7 @@ module DatapathSingleCycle (
     .rs2_data(rs2_data));
 
   wire [`REG_SIZE] load_addr = rs1_data + imm_i_sext;
+  wire [`REG_SIZE] store_addr = rs1_data + imm_s_sext;
   logic illegal_insn;
 
 
@@ -242,6 +243,9 @@ module DatapathSingleCycle (
     we = 1'b0;
     pcNext = pcCurrent + 32'd4;
     halt = 1'b0;
+    addr_to_dmem = 32'b0;
+    store_data_to_dmem = 32'b0;
+    store_we_to_dmem = 4'b0;
 
     case (insn_opcode)
       OpLui: begin
@@ -450,10 +454,26 @@ module DatapathSingleCycle (
           end
         endcase
       end
-      // OpStore: begin
-      //   case (insn_from_imem[14:12])
-      //   endcase
-      // end
+      OpStore: begin
+        addr_to_dmem = store_addr & ~32'h3;
+        case (insn_from_imem[14:12])
+          3'b000: begin
+            store_data_to_dmem = ({24'b0, rs2_data[7:0]}) << (8 * store_addr[1:0]);
+            store_we_to_dmem = 4'b0001 << store_addr[1:0];
+          end
+          3'b001: begin
+            store_data_to_dmem = store_addr[1] ? {rs2_data[15:0], 16'b0} : {16'b0, rs2_data[15:0]};
+            store_we_to_dmem = store_addr[1] ? 4'b1100 : 4'b0011;
+          end
+          3'b010: begin
+            store_data_to_dmem = rs2_data;
+            store_we_to_dmem = 4'b1111;
+          end
+          default: begin
+            illegal_insn = 1'b1;
+          end
+        endcase
+      end
 
       default: begin
         illegal_insn = 1'b1;
