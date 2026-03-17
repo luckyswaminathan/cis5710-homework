@@ -235,8 +235,19 @@ module DatapathSingleCycle (
   wire [`REG_SIZE] load_addr = rs1_data + imm_i_sext;
   wire [`REG_SIZE] store_addr = rs1_data + imm_s_sext;
   logic illegal_insn;
+  // DIV/REM use abs (signed); DIVU/REMU use raw (unsigned)
+  wire div_rem_signed = (insn_opcode == OpRegReg && insn_from_imem[31:25] == 7'd1) &&
+                        (insn_from_imem[14:12] == 3'b100 || insn_from_imem[14:12] == 3'b110);
+  wire [`REG_SIZE] dividend = div_rem_signed && rs1_data[31] ? ((~rs1_data) + 32'd1) : rs1_data;
+  wire [`REG_SIZE] divisor = div_rem_signed && rs2_data[31] ? ((~rs2_data) + 32'd1) : rs2_data;
+  wire [`REG_SIZE] quotient, remainder;
 
-
+  DividerUnsigned divider_unsigned_inst (
+    .i_dividend(dividend),
+    .i_divisor(divisor),
+    .o_quotient(quotient),
+    .o_remainder(remainder)
+  );
   always_comb begin
     illegal_insn = 1'b0;
     rd_data = 32'b0;
@@ -247,6 +258,7 @@ module DatapathSingleCycle (
     store_data_to_dmem = 32'b0;
     store_we_to_dmem = 4'b0;
 
+    
     case (insn_opcode)
       OpLui: begin
         rd_data = {insn_from_imem[31:12], 12'b0};
@@ -336,42 +348,139 @@ module DatapathSingleCycle (
                 rd_data = rs1_data + ((~rs2_data) + 32'd1);
                 we = 1'b1;
               end
+              7'b0000001: begin
+                rd_data = rs1_data * rs2_data;
+                we = 1'b1;
+              end
               default: begin
                 illegal_insn = 1'b1;
               end
             endcase
           end
           3'b001: begin 
-            rd_data = rs1_data << rs2_data[4:0];
-            we = 1'b1;
+            case (insn_from_imem[31:25])
+              7'b0000000: begin
+                rd_data = rs1_data << rs2_data[4:0];
+                we = 1'b1;
+              end
+              7'b0000001: begin 
+                logic signed [63:0] mulh_prod;
+                mulh_prod = $signed({{32{rs1_data[31]}}, rs1_data}) * $signed({{32{rs2_data[31]}}, rs2_data});
+                rd_data = mulh_prod[63:32];
+                we = 1'b1;
+              end
+              default: begin
+              illegal_insn = 1'b1;
+              end
+            endcase
           end
           3'b010: begin 
-            rd_data = ($signed(rs1_data) < $signed(rs2_data)) ? 32'b1 : 32'b0;
-            we = 1'b1;
+            case (insn_from_imem[31:25])
+              7'b0000000: begin
+                rd_data = ($signed(rs1_data) < $signed(rs2_data)) ? 32'b1 : 32'b0;
+                we = 1'b1;
+              end
+              7'b0000001: begin
+                logic signed [63:0] mulhsu_prod;
+                mulhsu_prod = $signed({{32{rs1_data[31]}}, rs1_data}) * {32'b0, rs2_data};
+                rd_data = mulhsu_prod[63:32];
+                we = 1'b1;
+              end
+              default: begin
+                illegal_insn = 1'b1;
+              end
+            endcase
+            
           end
           3'b011: begin 
-            rd_data = (rs1_data < rs2_data) ? 32'b1 : 32'b0;
-            we = 1'b1;
+            case (insn_from_imem[31:25])
+              7'b0000000: begin
+                rd_data = (rs1_data < rs2_data) ? 32'b1 : 32'b0;
+                we = 1'b1;
+              end
+              7'b0000001: begin
+                logic [63:0] mulhu_prod;
+                mulhu_prod = {32'b0, rs1_data} * {32'b0, rs2_data};
+                rd_data = mulhu_prod[63:32];
+                we = 1'b1;
+              end
+              default: begin
+                illegal_insn = 1'b1;
+              end
+            endcase
+            
           end
           3'b100: begin 
-            rd_data = rs1_data ^ rs2_data;
-            we = 1'b1;
+            case (insn_from_imem[31:25])
+              7'b0000000: begin
+                rd_data = rs1_data ^ rs2_data;
+                we = 1'b1;
+              end
+              7'b0000001: begin
+                if (rs2_data == 32'b0) begin
+                  rd_data = 32'hffffffff; // -1 value
+                end else begin
+                  // we XOR the data to figure out ideal sign - then invert if supposed to be negative
+                  rd_data = (rs1_data[31] ^ rs2_data[31]) ? ((~quotient) + 32'd1) : quotient;
+                end
+                we = 1'b1;
+              end
+              default: begin
+                illegal_insn = 1'b1;
+              end
+            endcase
           end
           3'b110: begin 
-            rd_data = rs1_data | rs2_data;
-            we = 1'b1;
+            case (insn_from_imem[31:25])
+              7'b0000000: begin
+                rd_data = rs1_data | rs2_data;
+                we = 1'b1;
+              end
+              7'b0000001: begin
+                if (rs2_data == 32'b0)
+                  rd_data = rs1_data;
+                else if (rs1_data == 32'h80000000 && rs2_data == 32'hffffffff)
+                  rd_data = 32'b0;
+                else
+                  rd_data = rs1_data[31] ? ((~remainder) + 32'd1) : remainder;
+                we = 1'b1;
+              end
+              default: begin
+                illegal_insn = 1'b1;
+              end
+            endcase
           end
           3'b101: begin
-            if (insn_from_imem[30])
-              rd_data = $signed(rs1_data) >>> rs2_data[4:0]; // SRA
-            else
-              rd_data = rs1_data >> rs2_data[4:0]; // SRL
-            we = 1'b1;
+            case (insn_from_imem[31:25])
+              7'b0000000: begin
+                rd_data = rs1_data >> rs2_data[4:0];
+                we = 1'b1;
+              end
+              7'b0100000: begin
+                rd_data = $signed(rs1_data) >>> rs2_data[4:0];
+                we = 1'b1;
+              end
+              7'b0000001: begin
+                rd_data = (rs2_data == 32'b0) ? 32'hffffffff : quotient;
+                we = 1'b1;
+              end
+              default: illegal_insn = 1'b1;
+            endcase
           end
-          3'b111: begin 
-            rd_data = rs1_data & rs2_data;
-            we = 1'b1;
+          3'b111: begin
+            case (insn_from_imem[31:25])
+              7'b0000000: begin
+                rd_data = rs1_data & rs2_data;
+                we = 1'b1;
+              end
+              7'b0000001: begin 
+                rd_data = (rs2_data == 32'b0) ? rs1_data : remainder;
+                we = 1'b1;
+              end
+              default: illegal_insn = 1'b1;
+            endcase
           end
+
 
           default: begin 
             illegal_insn = 1'b1;
