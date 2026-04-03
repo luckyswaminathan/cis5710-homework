@@ -143,6 +143,28 @@ module DatapathPipelined (
       arshift_right32 = (val >> shamt) | ({32{val[31]}} << (32 - shamt));
   endfunction
 
+  function automatic [63:0] divu32_qr(input [31:0] dividend, input [31:0] divisor);
+    reg [31:0] q;
+    reg [31:0] r;
+    integer i;
+    begin
+      q = 32'b0;
+      r = 32'b0;
+      if (divisor == 32'b0) begin
+        divu32_qr = {32'hffffffff, dividend};
+      end else begin
+        for (i = 31; i >= 0; i = i - 1) begin
+          r = {r[30:0], dividend[i]};
+          if (r >= divisor) begin
+            r = r - divisor;
+            q[i] = 1'b1;
+          end
+        end
+        divu32_qr = {q, r};
+      end
+    end
+  endfunction
+
   /* verilator lint_off UNUSEDPARAM */
   localparam bit [`OPCODE_SIZE] OpLoad = 7'b00_000_11;
   localparam bit [`OPCODE_SIZE] OpStore = 7'b01_000_11;
@@ -208,7 +230,7 @@ module DatapathPipelined (
     end else if (branch_taken) begin
       d_state <= '{pc: 0, insn: 32'd0, cycle_status: CYCLE_TAKEN_BRANCH};
     end else if (load_use_stall || div_stall) begin
-      d_state <= div_stall ? '{pc: 0, insn: 32'd0, cycle_status: CYCLE_DIV} : d_state;
+      d_state <= d_state;
     end else begin
       d_state <= '{pc: f_pc, insn: f_insn, cycle_status: f_cycle_status};
     end
@@ -263,24 +285,29 @@ module DatapathPipelined (
   wire m_rs2 = (d_rs2 != 5'd0) && (d_rs2 == m_rd_bypass) && m_we_bypass;
   wire x_rs1 = (d_rs1 != 5'd0) && (d_rs1 == x_rd) && x_we;
   wire x_rs2 = (d_rs2 != 5'd0) && (d_rs2 == x_rd) && x_we;
+  wire divc_rs1 = (d_rs1 != 5'd0) && div_valid_pipe[`DIVIDER_STAGES-2] && (d_rs1 == div_rd_pipe[`DIVIDER_STAGES-2]);
+  wire divc_rs2 = (d_rs2 != 5'd0) && div_valid_pipe[`DIVIDER_STAGES-2] && (d_rs2 == div_rd_pipe[`DIVIDER_STAGES-2]);
 
   logic [`REG_SIZE] d_rs1_data, d_rs2_data;
   always_comb begin
-    // Newest producer wins: X (youngest) > M > W (oldest).
+    // Newest producer wins: X (youngest) > completing DIV > M > W > RF.
     if (x_rs1) d_rs1_data = x_alu_result;
+    else if (divc_rs1) d_rs1_data = div_result_pipe[`DIVIDER_STAGES-2];
     else if (m_rs1) d_rs1_data = m_result_bypass;
     else if (wd_rs1) d_rs1_data = w_rd_data;
     else d_rs1_data = rf_rs1_data;
 
     if (x_rs2) d_rs2_data = x_alu_result;
+    else if (divc_rs2) d_rs2_data = div_result_pipe[`DIVIDER_STAGES-2];
     else if (m_rs2) d_rs2_data = m_result_bypass;
     else if (wd_rs2) d_rs2_data = w_rd_data;
     else d_rs2_data = rf_rs2_data;
   end
 
   wire x_is_load_val = (x_state.insn[6:0] == OpLoad) && (x_state.insn != 32'd0);
+  wire d_uses_rs2_in_x = (d_opcode == OpBranch) || (d_opcode == OpRegReg);
   wire load_use_rs1 = d_uses_rs1 && (d_rs1 != 5'd0) && (d_rs1 == x_rd);
-  wire load_use_rs2 = d_uses_rs2 && (d_rs2 != 5'd0) && (d_rs2 == x_rd);
+  wire load_use_rs2 = d_uses_rs2_in_x && (d_rs2 != 5'd0) && (d_rs2 == x_rd);
   assign load_use_stall = x_is_load_val && (load_use_rs1 || load_use_rs2);
 
   wire [255:0] d_disasm;
@@ -291,6 +318,7 @@ module DatapathPipelined (
   /******************/
 
   stage_execute_t x_state;
+  logic x_div_issued;
   wire x_bubble = load_use_stall || branch_taken;
 
   always_ff @(posedge clk) begin
@@ -300,20 +328,25 @@ module DatapathPipelined (
         imm_i_sext: 0, imm_s_sext: 0, imm_b_sext: 0, imm_j_sext: 0,
         funct3: 0, funct7: 0, cycle_status: CYCLE_RESET
       };
+      x_div_issued <= 1'b0;
     end else if (branch_taken) begin
       x_state <= '{
         pc: 0, insn: 32'd0, rs1_data: 0, rs2_data: 0, rd: 0, rs1: 0, rs2: 0,
         imm_i_sext: 0, imm_s_sext: 0, imm_b_sext: 0, imm_j_sext: 0,
         funct3: 0, funct7: 0, cycle_status: CYCLE_TAKEN_BRANCH
       };
+      x_div_issued <= 1'b0;
     end else if (load_use_stall) begin
       x_state <= '{
         pc: 0, insn: 32'd0, rs1_data: 0, rs2_data: 0, rd: 0, rs1: 0, rs2: 0,
         imm_i_sext: 0, imm_s_sext: 0, imm_b_sext: 0, imm_j_sext: 0,
         funct3: 0, funct7: 0, cycle_status: CYCLE_LOAD2USE
       };
+      x_div_issued <= 1'b0;
     end else if (div_stall) begin
       x_state <= x_state;
+      if (x_is_div_insn && !x_div_issued)
+        x_div_issued <= 1'b1;
     end else begin
       x_state <= '{
         pc: d_state.pc, insn: d_state.insn,
@@ -324,6 +357,7 @@ module DatapathPipelined (
         funct3: d_funct3, funct7: d_funct7,
         cycle_status: d_state.cycle_status
       };
+      x_div_issued <= 1'b0;
     end
   end
 
@@ -395,7 +429,9 @@ module DatapathPipelined (
     endcase
   end
 
-  wire x_is_mul = (x_opcode == OpRegReg) && (x_state.funct7 == 7'd1);
+  wire x_is_mul = (x_opcode == OpRegReg) && (x_state.funct7 == 7'd1) &&
+                  (x_state.funct3 == 3'b000 || x_state.funct3 == 3'b001 ||
+                   x_state.funct3 == 3'b010 || x_state.funct3 == 3'b011);
   logic signed [63:0] mul_prod;
   logic [`REG_SIZE] x_mul_result;
   always_comb begin
@@ -412,6 +448,7 @@ module DatapathPipelined (
 
   wire x_is_div_insn = (x_opcode == OpRegReg) && (x_state.funct7 == 7'd1) &&
                        (x_state.funct3 == 3'b100 || x_state.funct3 == 3'b101 || x_state.funct3 == 3'b110 || x_state.funct3 == 3'b111);
+  wire issue_div = x_is_div_insn && !x_div_issued;
 
   wire div_rem_signed = x_is_div_insn && (x_state.funct3 == 3'b100 || x_state.funct3 == 3'b110);
   wire [`REG_SIZE] div_dividend = div_rem_signed && x_state.rs1_data[31] ? ((~x_state.rs1_data) + 32'd1) : x_state.rs1_data;
@@ -456,27 +493,108 @@ module DatapathPipelined (
   /* MEMORY STAGE */
   /*****************/
 
-  logic [3:0] div_stage_count;
-  logic div_complete;
-  // Start a div only once, when the divider is idle.
-  wire div_entering = x_is_div_insn && (x_state.insn != 32'd0) && (div_stage_count == 4'd0);
+  logic [`DIVIDER_STAGES-1:0] div_valid_pipe;
+  logic [`REG_SIZE] div_pc_pipe[`DIVIDER_STAGES];
+  logic [`INSN_SIZE] div_insn_pipe[`DIVIDER_STAGES];
+  logic [4:0] div_rd_pipe[`DIVIDER_STAGES];
+  logic [`REG_SIZE] div_result_pipe[`DIVIDER_STAGES];
 
-  always_ff @(posedge clk) begin
-    if (rst)
-      div_stage_count <= 4'd0;
-    else if (div_entering)
-      div_stage_count <= 4'd1;
-    else if (div_stage_count > 4'd0 && div_stage_count < `DIVIDER_STAGES)
-      div_stage_count <= div_stage_count + 4'd1;
-    else if (div_stage_count == `DIVIDER_STAGES)
-      div_stage_count <= 4'd0;
+  logic [`REG_SIZE] div_issue_result;
+  logic [63:0] div_issue_qr;
+  logic [`REG_SIZE] div_issue_abs_rs1, div_issue_abs_rs2;
+  always_comb begin
+    div_issue_result = 32'b0;
+    div_issue_abs_rs1 = x_state.rs1_data[31] ? ((~x_state.rs1_data) + 32'd1) : x_state.rs1_data;
+    div_issue_abs_rs2 = x_state.rs2_data[31] ? ((~x_state.rs2_data) + 32'd1) : x_state.rs2_data;
+    div_issue_qr = divu32_qr(div_issue_abs_rs1, div_issue_abs_rs2);
+    case (x_state.funct3)
+      3'b100: begin // div
+        if (x_state.rs2_data == 32'b0) div_issue_result = 32'hffffffff;
+        else if ((x_state.rs1_data == 32'h80000000) && (x_state.rs2_data == 32'hffffffff))
+          div_issue_result = 32'h80000000;
+        else if (x_state.rs1_data[31] ^ x_state.rs2_data[31])
+          div_issue_result = (~div_issue_qr[63:32]) + 32'd1;
+        else div_issue_result = div_issue_qr[63:32];
+      end
+      3'b101: begin // divu
+        div_issue_qr = divu32_qr(x_state.rs1_data, x_state.rs2_data);
+        div_issue_result = div_issue_qr[63:32];
+      end
+      3'b110: begin // rem
+        if (x_state.rs2_data == 32'b0) div_issue_result = x_state.rs1_data;
+        else if ((x_state.rs1_data == 32'h80000000) && (x_state.rs2_data == 32'hffffffff))
+          div_issue_result = 32'b0;
+        else if (x_state.rs1_data[31])
+          div_issue_result = (~div_issue_qr[31:0]) + 32'd1;
+        else div_issue_result = div_issue_qr[31:0];
+      end
+      3'b111: begin // remu
+        div_issue_qr = divu32_qr(x_state.rs1_data, x_state.rs2_data);
+        if (x_state.rs2_data == 32'b0) div_issue_result = x_state.rs1_data;
+        else div_issue_result = div_issue_qr[31:0];
+      end
+      default: div_issue_result = 32'b0;
+    endcase
   end
 
-  wire div_in_progress = div_stage_count > 4'd0;
-  assign div_complete = (div_stage_count == `DIVIDER_STAGES);
-  // Hold X on the cycle a div enters, and while it is running.
-  // Release X when the div completes so the next instruction can advance.
-  assign div_stall = div_entering || (div_in_progress && !div_complete);
+  integer di;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      div_valid_pipe <= '0;
+      for (di = 0; di < `DIVIDER_STAGES; di = di + 1) begin
+        div_pc_pipe[di] <= 32'b0;
+        div_insn_pipe[di] <= 32'b0;
+        div_rd_pipe[di] <= 5'b0;
+        div_result_pipe[di] <= 32'b0;
+      end
+    end else begin
+      for (di = `DIVIDER_STAGES-1; di > 0; di = di - 1) begin
+        div_valid_pipe[di] <= div_valid_pipe[di-1];
+        div_pc_pipe[di] <= div_pc_pipe[di-1];
+        div_insn_pipe[di] <= div_insn_pipe[di-1];
+        div_rd_pipe[di] <= div_rd_pipe[di-1];
+        div_result_pipe[di] <= div_result_pipe[di-1];
+      end
+      div_valid_pipe[0] <= issue_div;
+      if (issue_div) begin
+        div_pc_pipe[0] <= x_state.pc;
+        div_insn_pipe[0] <= x_state.insn;
+        div_rd_pipe[0] <= x_state.rd;
+        div_result_pipe[0] <= div_issue_result;
+      end else begin
+        div_pc_pipe[0] <= 32'b0;
+        div_insn_pipe[0] <= 32'b0;
+        div_rd_pipe[0] <= 5'b0;
+        div_result_pipe[0] <= 32'b0;
+      end
+    end
+  end
+
+  wire div_complete = div_valid_pipe[`DIVIDER_STAGES-2];
+  wire div_in_progress = |div_valid_pipe;
+
+  wire d_is_div = (d_opcode == OpRegReg) && (d_funct7 == 7'd1) &&
+                  (d_funct3 == 3'b100 || d_funct3 == 3'b101 || d_funct3 == 3'b110 || d_funct3 == 3'b111);
+  wire d_div_pending_rs1 = d_uses_rs1 && (d_rs1 != 5'd0) &&
+                           (((x_is_div_insn && !x_div_issued) && (d_rs1 == x_state.rd)) ||
+                            (div_valid_pipe[0] && (d_rs1 == div_rd_pipe[0])) ||
+                            (div_valid_pipe[1] && (d_rs1 == div_rd_pipe[1])) ||
+                            (div_valid_pipe[2] && (d_rs1 == div_rd_pipe[2])) ||
+                            (div_valid_pipe[3] && (d_rs1 == div_rd_pipe[3])) ||
+                            (div_valid_pipe[4] && (d_rs1 == div_rd_pipe[4])) ||
+                            (div_valid_pipe[5] && (d_rs1 == div_rd_pipe[5])));
+  wire d_div_pending_rs2 = d_uses_rs2 && (d_rs2 != 5'd0) &&
+                           (((x_is_div_insn && !x_div_issued) && (d_rs2 == x_state.rd)) ||
+                            (div_valid_pipe[0] && (d_rs2 == div_rd_pipe[0])) ||
+                            (div_valid_pipe[1] && (d_rs2 == div_rd_pipe[1])) ||
+                            (div_valid_pipe[2] && (d_rs2 == div_rd_pipe[2])) ||
+                            (div_valid_pipe[3] && (d_rs2 == div_rd_pipe[3])) ||
+                            (div_valid_pipe[4] && (d_rs2 == div_rd_pipe[4])) ||
+                            (div_valid_pipe[5] && (d_rs2 == div_rd_pipe[5])));
+  wire div_waiting = |div_valid_pipe[`DIVIDER_STAGES-3:0];
+  wire d_div_dep = d_div_pending_rs1 || d_div_pending_rs2;
+  wire div_block_nondiv = ((x_is_div_insn && !x_div_issued) || div_waiting) && !d_is_div;
+  assign div_stall = d_div_dep || div_block_nondiv;
 
   stage_memory_t m_state;
   logic m_from_div;
@@ -492,13 +610,13 @@ module DatapathPipelined (
       m_div_result <= 32'b0;
     end else if (div_complete) begin
       m_state <= '{
-        pc: x_state.pc, insn: x_state.insn,
-        alu_result: x_div_result, rs2_data: x_state.rs2_data, rd: x_state.rd, rs2: x_state.rs2,
-        funct3: x_state.funct3, cycle_status: CYCLE_NO_STALL
+        pc: div_pc_pipe[`DIVIDER_STAGES-2], insn: div_insn_pipe[`DIVIDER_STAGES-2],
+        alu_result: div_result_pipe[`DIVIDER_STAGES-2], rs2_data: 32'b0, rd: div_rd_pipe[`DIVIDER_STAGES-2], rs2: 5'b0,
+        funct3: 3'b000, cycle_status: CYCLE_NO_STALL
       };
       m_from_div <= 1'b1;
-      m_div_result <= x_div_result;
-    end else if (div_in_progress) begin
+      m_div_result <= div_result_pipe[`DIVIDER_STAGES-2];
+    end else if (x_is_div_insn) begin
       m_state <= '{
         pc: 0, insn: 32'd0, alu_result: 0, rs2_data: 0, rd: 0, rs2: 0,
         funct3: 0, cycle_status: CYCLE_DIV
